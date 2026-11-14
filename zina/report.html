@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Zina trace</title>
+<style>
+:root {
+  --bg: #f7f7f5; --panel: #ffffff; --ink: #1c1c1a; --muted: #6b6b66; --line: #e4e4df;
+  --accent: #2563eb; --turn: #cbd5e1; --skill: #f59e0b; --agent: #8b5cf6; --tool: #94a3b8;
+  --read: #34d399; --create: #f87171; --uncached: #fbbf24; --out: #60a5fa;
+  --high: #dc2626; --medium: #d97706; --low: #2563eb;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #121212; --panel: #1b1b1b; --ink: #ececea; --muted: #9a9a94; --line: #2c2c2c;
+  --turn: #334155; --tool: #64748b;
+}}
+:root[data-theme="dark"] {
+  --bg: #121212; --panel: #1b1b1b; --ink: #ececea; --muted: #9a9a94; --line: #2c2c2c;
+  --turn: #334155; --tool: #64748b;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--ink); font: 14px/1.45 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; }
+main { max-width: 1200px; margin: 0 auto; padding: 24px 16px 64px; }
+h1 { font-size: 20px; margin: 0 0 4px; }
+h2 { font-size: 15px; margin: 32px 0 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+.sub { color: var(--muted); font-size: 13px; word-break: break-all; }
+.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin-top: 16px; }
+.tile { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px; }
+.tile .k { color: var(--muted); font-size: 12px; }
+.tile .v { font-size: 20px; font-weight: 600; margin-top: 2px; font-variant-numeric: tabular-nums; }
+.tile .d { color: var(--muted); font-size: 12px; margin-top: 2px; }
+.panel { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 12px; overflow-x: auto; }
+svg { display: block; }
+.bar:hover, .tick:hover { filter: brightness(1.15); cursor: default; }
+#tip { position: fixed; pointer-events: none; background: var(--ink); color: var(--bg); padding: 8px 10px; border-radius: 6px; font-size: 12px; max-width: 420px; white-space: pre-wrap; display: none; z-index: 10; }
+table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { color: var(--muted); font-weight: 500; font-size: 12px; cursor: pointer; white-space: nowrap; }
+td.num, th.num { text-align: right; }
+.mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+.sw { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 6px; vertical-align: -1px; }
+.legend { display: flex; gap: 16px; flex-wrap: wrap; color: var(--muted); font-size: 12px; margin: 8px 0 0; }
+.finding { border-left: 3px solid var(--low); padding: 8px 12px; margin: 8px 0; background: var(--panel); border-radius: 0 6px 6px 0; }
+.finding.high { border-color: var(--high); } .finding.medium { border-color: var(--medium); }
+.finding .t { font-weight: 600; } .finding .d { color: var(--muted); font-size: 13px; margin-top: 2px; }
+.finding .s { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+.empty { color: var(--muted); padding: 12px; }
+.trunc { max-width: 420px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+</style>
+</head>
+<body>
+<main>
+  <h1 id="title">Zina trace</h1>
+  <div class="sub" id="meta"></div>
+  <div class="tiles" id="tiles"></div>
+
+  <h2>Timeline</h2>
+  <div class="panel"><div id="flame"></div>
+    <div class="legend">
+      <span><i class="sw" style="background:var(--turn)"></i>turn</span>
+      <span><i class="sw" style="background:var(--skill)"></i>skill span</span>
+      <span><i class="sw" style="background:var(--agent)"></i>subagent span</span>
+      <span><i class="sw" style="background:var(--tool)"></i>tool call (height ∝ tokens returned)</span>
+      <span>Each row is one turn; the x-axis is time within that turn (idle time between turns is not drawn).</span>
+    </div>
+  </div>
+
+  <h2>Context per API call</h2>
+  <div class="panel"><div id="ctx"></div>
+    <div class="legend">
+      <span><i class="sw" style="background:var(--read)"></i>cache read</span>
+      <span><i class="sw" style="background:var(--create)"></i>cache write (miss)</span>
+      <span><i class="sw" style="background:var(--uncached)"></i>uncached input</span>
+      <span><i class="sw" style="background:var(--out)"></i>output</span>
+      <span>Bar colour strip below = attributed span.</span>
+    </div>
+  </div>
+
+  <h2>Findings</h2>
+  <div id="findings"></div>
+
+  <h2>Spans in this session</h2>
+  <div class="panel"><table id="spans"></table></div>
+
+  <h2>Tool calls</h2>
+  <div class="panel"><table id="tools"></table></div>
+
+  <h2>Harness-injected context</h2>
+  <div class="panel"><table id="att"></table></div>
+
+  <h2>Skill leaderboard (all ingested sessions)</h2>
+  <div class="panel"><table id="lb"></table></div>
+</main>
+<div id="tip"></div>
+<script>
+const DATA = /*__ZINA_DATA__*/null;
+const $ = (s) => document.querySelector(s);
+const fmt = (n) => (n == null ? "–" : Math.round(n).toLocaleString());
+const ms = (v) => v == null ? "–" : v < 1000 ? v + "ms" : v < 60000 ? (v / 1000).toFixed(1) + "s" : (v / 60000).toFixed(1) + "m";
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const tip = $("#tip");
+function showTip(e, text) { tip.textContent = text; tip.style.display = "block"; moveTip(e); }
+function moveTip(e) { tip.style.left = Math.min(e.clientX + 12, window.innerWidth - 440) + "px"; tip.style.top = (e.clientY + 12) + "px"; }
+function hideTip() { tip.style.display = "none"; }
+function svgEl(tag, attrs) { const el = document.createElementNS("http://www.w3.org/2000/svg", tag); for (const k in attrs) el.setAttribute(k, attrs[k]); return el; }
+
+const S = DATA.session, T = S.tokens;
+const spanById = Object.fromEntries(DATA.spans.map((s) => [s.id, s]));
+const spanColor = (sp) => !sp ? "var(--turn)" : sp.kind === "skill" ? "var(--skill)" : sp.kind === "agent" ? "var(--agent)" : "var(--turn)";
+
+// ---- header -------------------------------------------------------------
+$("#title").textContent = `Zina trace · ${S.id.slice(0, 8)}`;
+$("#meta").textContent = `${S.project} · ${S.models.join(", ")} · Claude Code ${S.version} · ${S.started_at ?? ""} · ${S.transcript}`;
+const cacheHit = T.total_input ? T.cache_read / T.total_input : 0;
+const tiles = [
+  ["Turns", DATA.turns.length, `${DATA.api.length} API calls · ${DATA.tools.length} tool calls`],
+  ["Wall time", ms(S.duration_ms), `cost $${S.cost_usd.toFixed(2)}`],
+  ["Input tokens", fmt(T.total_input), `${fmt(T.output)} output`],
+  ["Cache hit rate", (cacheHit * 100).toFixed(0) + "%", `${fmt(T.cache_read)} read`],
+  ["Cache writes", fmt(T.cache_creation), `${fmt(T.input)} fully uncached`],
+  ["System prompt", fmt(S.system_prompt_tokens), "tokens (est.)"],
+];
+$("#tiles").innerHTML = tiles.map(([k, v, d]) => `<div class="tile"><div class="k">${k}</div><div class="v">${v}</div><div class="d">${d}</div></div>`).join("");
+
+// ---- flame graph --------------------------------------------------------
+(function flame() {
+  const W = Math.max(900, $("#flame").clientWidth || 900), LEFT = 60, RIGHT = 20;
+  const turns = DATA.turns.filter((t) => t.start != null && t.end != null);
+  if (!turns.length) { $("#flame").innerHTML = '<div class="empty">No turns.</div>'; return; }
+  const maxDur = Math.max(...turns.map((t) => t.end - t.start), 1);
+  const ROW = 64, svg = svgEl("svg", { width: W, height: turns.length * ROW + 10 });
+  turns.forEach((t, i) => {
+    const y0 = i * ROW + 6, scale = (W - LEFT - RIGHT) / maxDur;
+    const x = (ms) => LEFT + (ms - t.start) * scale;
+    const w = (a, b) => Math.max(2, (b - a) * scale);
+    const label = svgEl("text", { x: 4, y: y0 + 14, fill: "var(--muted)", "font-size": 12 });
+    label.textContent = `T${t.index}`; svg.appendChild(label);
+    const tb = svgEl("rect", { class: "bar", x: x(t.start), y: y0, width: w(t.start, t.end), height: 10, rx: 2, fill: "var(--turn)" });
+    tb.addEventListener("mousemove", (e) => showTip(e, `Turn ${t.index} · ${ms(t.duration_ms)}\n${t.prompt}`));
+    tb.addEventListener("mouseleave", hideTip); svg.appendChild(tb);
+    // spans (skills, agents) under this turn
+    const sps = DATA.spans.filter((s) => s.turn_id === t.id && s.kind !== "turn" && s.start != null);
+    sps.forEach((s) => {
+      const yy = y0 + 14 + Math.min(s.depth, 2) * 0 + (s.kind === "agent" ? 12 : 0);
+      const r = svgEl("rect", { class: "bar", x: x(s.start), y: yy, width: w(s.start, s.end ?? t.end), height: 10, rx: 2, fill: spanColor(s), opacity: .9 });
+      r.addEventListener("mousemove", (e) => showTip(e, `${s.kind}: ${s.name} · ${ms(s.duration_ms)}\n${s.api_calls} API calls · ${fmt(s.input_tokens + s.cache_read + s.cache_creation)} input tok (${fmt(s.cache_creation)} cache writes)\n${s.tool_calls} tool calls · ~${fmt(s.tool_result_tokens)} tok returned`));
+      r.addEventListener("mouseleave", hideTip); svg.appendChild(r);
+    });
+    // tool ticks
+    const tools = DATA.tools.filter((c) => c.start != null && c.start >= t.start && c.start <= t.end);
+    const maxTok = Math.max(1, ...tools.map((c) => c.result_tokens));
+    tools.forEach((c) => {
+      const h = 4 + 20 * Math.sqrt(c.result_tokens / maxTok);
+      const sp = spanById[c.span_id];
+      const r = svgEl("rect", { class: "tick", x: x(c.start), y: y0 + ROW - 8 - h, width: w(c.start, c.end ?? c.start + 1), height: h, fill: c.is_error ? "var(--create)" : (sp && sp.kind !== "turn" ? spanColor(sp) : "var(--tool)"), opacity: .85 });
+      r.addEventListener("mousemove", (e) => showTip(e, `${c.name} · ${ms(c.duration_ms)} · ~${fmt(c.result_tokens)} tok returned\n${c.summary}\nspan: ${sp ? sp.name : "?"}`));
+      r.addEventListener("mouseleave", hideTip); svg.appendChild(r);
+    });
+    const dl = svgEl("text", { x: W - RIGHT, y: y0 + 14, fill: "var(--muted)", "font-size": 11, "text-anchor": "end" });
+    dl.textContent = ms(t.duration_ms); svg.appendChild(dl);
+  });
+  $("#flame").appendChild(svg);
+})();
+
+// ---- context stacked bars ----------------------------------------------
+(function ctx() {
+  const calls = DATA.api;
+  if (!calls.length) { $("#ctx").innerHTML = '<div class="empty">No API calls.</div>'; return; }
+  const W = Math.max(900, $("#ctx").clientWidth || 900), H = 220, LEFT = 60, BOT = 24;
+  const bw = Math.max(2, Math.min(18, (W - LEFT - 10) / calls.length - 1));
+  const max = Math.max(...calls.map((c) => c.input + c.cache_read + c.cache_creation + c.output), 1);
+  const svg = svgEl("svg", { width: W, height: H + BOT });
+  const y = (v) => H - (v / max) * (H - 10);
+  [0, .5, 1].forEach((f) => {
+    const yy = y(max * f);
+    svg.appendChild(svgEl("line", { x1: LEFT, x2: W, y1: yy, y2: yy, stroke: "var(--line)" }));
+    const l = svgEl("text", { x: LEFT - 6, y: yy + 4, fill: "var(--muted)", "font-size": 11, "text-anchor": "end" });
+    l.textContent = fmt(max * f); svg.appendChild(l);
+  });
+  calls.forEach((c, i) => {
+    const x = LEFT + i * (bw + 1);
+    let acc = 0;
+    const parts = [["cache_read", "var(--read)"], ["cache_creation", "var(--create)"], ["input", "var(--uncached)"], ["output", "var(--out)"]];
+    const g = svgEl("g", { class: "bar" });
+    parts.forEach(([k, col]) => {
+      const v = c[k]; if (!v) return;
+      g.appendChild(svgEl("rect", { x, y: y(acc + v), width: bw, height: y(acc) - y(acc + v), fill: col }));
+      acc += v;
+    });
+    const sp = spanById[c.span_id];
+    g.appendChild(svgEl("rect", { x, y: H + 2, width: bw, height: 6, fill: spanColor(sp) }));
+    g.addEventListener("mousemove", (e) => showTip(e, `API call ${i + 1} · ${c.model}\ncache read ${fmt(c.cache_read)} · cache write ${fmt(c.cache_creation)} · uncached ${fmt(c.input)} · output ${fmt(c.output)}\nspan: ${sp ? sp.kind + " " + sp.name : "?"}`));
+    g.addEventListener("mouseleave", hideTip);
+    svg.appendChild(g);
+  });
+  $("#ctx").appendChild(svg);
+})();
+
+// ---- findings -----------------------------------------------------------
+$("#findings").innerHTML = DATA.findings.length
+  ? DATA.findings.map((f) => `<div class="finding ${f.severity}"><div class="s">${f.severity}${f.span ? " · " + esc(f.span) : ""}</div><div class="t">${esc(f.title)}</div><div class="d">${esc(f.detail)}</div></div>`).join("")
+  : '<div class="empty">Nothing stood out. Either the session is small or the skills are well behaved.</div>';
+
+// ---- tables -------------------------------------------------------------
+function table(el, cols, rows, defaultSort) {
+  let sortKey = defaultSort, desc = true;
+  const draw = () => {
+    const sorted = [...rows].sort((a, b) => {
+      const va = a[sortKey], vb = b[sortKey];
+      return (typeof va === "number" ? va - vb : String(va ?? "").localeCompare(String(vb ?? ""))) * (desc ? -1 : 1);
+    });
+    el.innerHTML = "<thead><tr>" + cols.map((c) => `<th class="${c.num ? "num" : ""}" data-k="${c.key}">${c.label}${c.key === sortKey ? (desc ? " ↓" : " ↑") : ""}</th>`).join("") + "</tr></thead><tbody>" +
+      (sorted.length ? sorted.map((r) => "<tr>" + cols.map((c) => `<td class="${c.num ? "num" : ""} ${c.cls || ""}">${c.render ? c.render(r) : esc(r[c.key])}</td>`).join("") + "</tr>").join("") : `<tr><td colspan="${cols.length}" class="empty">No rows.</td></tr>`) + "</tbody>";
+    el.querySelectorAll("th").forEach((th) => th.addEventListener("click", () => { const k = th.dataset.k; if (k === sortKey) desc = !desc; else { sortKey = k; desc = true; } draw(); }));
+  };
+  draw();
+}
+const spanRows = DATA.spans.map((s) => ({ ...s, total_in: s.input_tokens + s.cache_read + s.cache_creation, miss: (s.input_tokens + s.cache_read + s.cache_creation) ? s.cache_creation / (s.input_tokens + s.cache_read + s.cache_creation) : 0, tool_list: Object.entries(s.tools).sort((a, b) => b[1] - a[1]).map(([k, v]) => `${k}×${v}`).join(", ") }));
+table($("#spans"), [
+  { key: "kind", label: "Kind", render: (r) => `<i class="sw" style="background:${spanColor(r)}"></i>${esc(r.kind)}` },
+  { key: "name", label: "Name", cls: "mono" },
+  { key: "duration_ms", label: "Wall", num: true, render: (r) => ms(r.duration_ms) },
+  { key: "api_calls", label: "API calls", num: true },
+  { key: "total_in", label: "Input tok", num: true, render: (r) => fmt(r.total_in) },
+  { key: "cache_creation", label: "Cache writes", num: true, render: (r) => fmt(r.cache_creation) },
+  { key: "miss", label: "Miss %", num: true, render: (r) => (r.miss * 100).toFixed(0) + "%" },
+  { key: "output_tokens", label: "Output", num: true, render: (r) => fmt(r.output_tokens) },
+  { key: "tool_calls", label: "Tools", num: true },
+  { key: "tool_result_tokens", label: "Tok returned", num: true, render: (r) => fmt(r.tool_result_tokens) },
+  { key: "tool_list", label: "Tool mix", cls: "mono trunc" },
+], "total_in");
+table($("#tools"), [
+  { key: "name", label: "Tool", cls: "mono" },
+  { key: "summary", label: "Input", cls: "mono trunc", render: (r) => `<span title="${esc(r.summary)}">${esc(r.summary)}</span>` },
+  { key: "span", label: "Span", render: (r) => { const sp = spanById[r.span_id]; return sp ? `<i class="sw" style="background:${spanColor(sp)}"></i>${esc(sp.name)}` : "–"; } },
+  { key: "duration_ms", label: "Duration", num: true, render: (r) => ms(r.duration_ms) },
+  { key: "result_tokens", label: "Tok returned", num: true, render: (r) => fmt(r.result_tokens) },
+  { key: "is_error", label: "Err", render: (r) => r.is_error ? "✕" : "" },
+], "result_tokens");
+table($("#att"), [
+  { key: "type", label: "Attachment type", cls: "mono" },
+  { key: "tokens", label: "Tokens (est.)", num: true, render: (r) => fmt(r.tokens) },
+], "tokens");
+table($("#lb"), [
+  { key: "kind", label: "Kind" }, { key: "name", label: "Name", cls: "mono" },
+  { key: "invocations", label: "Invocations", num: true }, { key: "sessions", label: "Sessions", num: true },
+  { key: "input_tokens", label: "Input tok", num: true, render: (r) => fmt(r.input_tokens) },
+  { key: "cache_creation", label: "Cache writes", num: true, render: (r) => fmt(r.cache_creation) },
+  { key: "tool_calls", label: "Tools", num: true },
+  { key: "tool_result_tokens", label: "Tok returned", num: true, render: (r) => fmt(r.tool_result_tokens) },
+  { key: "avg_ms", label: "Avg wall", num: true, render: (r) => ms(r.avg_ms) },
+], "input_tokens");
+</script>
+</body>
+</html>

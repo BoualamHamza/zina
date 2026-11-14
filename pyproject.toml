@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "zina"
+version = "0.1.0"
+description = "Trace where your Claude Code skills, plugins and subagents spend time and context."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+dependencies = []
+
+[project.scripts]
+zina = "zina.cli:main"
+
+[tool.setuptools]
+packages = ["zina"]
+
+[tool.setuptools.package-data]
+zina = ["report.html"]
