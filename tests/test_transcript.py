@@ -9,8 +9,13 @@ from zina.analyze import findings
 from zina.report import render
 
 
+from datetime import datetime, timedelta, timezone
+
+T0 = datetime(2026, 1, 1, tzinfo=timezone.utc)
+
+
 def ts(sec: float) -> str:
-    return f"2026-01-01T00:00:{sec:06.3f}Z"
+    return (T0 + timedelta(seconds=sec)).strftime("%Y-%m-%dT%H:%M:%S.") + f"{int((sec % 1) * 1000):03d}Z"
 
 
 def user(pid, content, t, **kw):
